@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { parseArgsStringToArgv } from 'string-argv';
-import { GradleProject, GradleBuild, GradleTask } from '../proto/gradle_pb';
+import { GradleProject, GradleBuild, GradleTask, GetDependenciesReply } from '../proto/gradle_pb';
 import { TaskArgs } from '../stores/types';
 import { GradleTaskDefinition } from '.';
 import { GradleRunnerTerminal } from '../terminal';
@@ -252,6 +252,13 @@ async function getGradleBuild(
   rootProject: RootProject
 ): Promise<GradleBuild | void> {
   return client.getBuild(rootProject, getGradleConfig());
+}
+
+export async function getGradleDependencies(
+  client: GradleClient,
+  rootProject: RootProject
+): Promise<GetDependenciesReply | undefined> {
+  return client.getDependencies(rootProject, getGradleConfig());
 }
 
 export async function loadTasksForProjectRoots(

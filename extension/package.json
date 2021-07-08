@@ -63,6 +63,11 @@
           "when": "gradle:activated"
         },
         {
+          "id": "gradleDependenciesView",
+          "name": "Gradle Dependencies",
+          "when": "gradle:activated"
+        },
+        {
           "id": "pinnedTasksView",
           "name": "Pinned Tasks",
           "when": "gradle:activated"

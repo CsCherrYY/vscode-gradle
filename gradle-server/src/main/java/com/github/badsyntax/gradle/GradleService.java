@@ -4,12 +4,21 @@ import com.github.badsyntax.gradle.handlers.CancelBuildHandler;
 import com.github.badsyntax.gradle.handlers.CancelBuildsHandler;
 import com.github.badsyntax.gradle.handlers.GetBuildHandler;
 import com.github.badsyntax.gradle.handlers.GetDaemonsStatusHandler;
+import com.github.badsyntax.gradle.handlers.GetDependenciesHandler;
 import com.github.badsyntax.gradle.handlers.RunBuildHandler;
 import com.github.badsyntax.gradle.handlers.StopDaemonHandler;
 import com.github.badsyntax.gradle.handlers.StopDaemonsHandler;
 import io.grpc.stub.StreamObserver;
 
 public class GradleService extends GradleGrpc.GradleImplBase {
+
+  @Override
+  public void getDependencies(
+      GetDependenciesRequest req, StreamObserver<GetDependenciesReply> responseObserver) {
+    GetDependenciesHandler getDependenciesHandler =
+        new GetDependenciesHandler(req, responseObserver);
+    getDependenciesHandler.run();
+  }
 
   @Override
   public void getBuild(GetBuildRequest req, StreamObserver<GetBuildReply> responseObserver) {

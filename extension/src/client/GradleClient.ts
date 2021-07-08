@@ -22,6 +22,8 @@ import {
   CancelBuildReply,
   CancelBuildsRequest,
   CancelBuildsReply,
+  GetDependenciesRequest,
+  GetDependenciesReply,
 } from '../proto/gradle_pb';
 
 import { GradleClient as GrpcClient } from '../proto/gradle_grpc_pb';
@@ -122,6 +124,39 @@ export class GradleClient implements vscode.Disposable {
     } catch (err) {
       logger.error('Unable to construct the gRPC client:', err.message);
       this.statusBarItem.hide();
+    }
+  }
+
+  public async getDependencies(rootProject: RootProject, gradleConfig: GradleConfig): Promise<GetDependenciesReply | undefined> {
+    const request = new GetDependenciesRequest();
+    request.setProjectDir(rootProject.getProjectUri().fsPath);
+    request.setGradleConfig(gradleConfig);
+    const getDependenciesStream = this.grpcClient!.getDependencies(request);
+    try {
+      return await new Promise((resolve, reject) => {
+        let reply: GetDependenciesReply | undefined;
+        getDependenciesStream
+          .on('data', async (getDependenciesReply: GetDependenciesReply) => {
+            reply = getDependenciesReply;
+          })
+          .on('error', reject)
+          .on('end', () => {
+            resolve(reply);
+          });
+      });
+    } catch (err) {
+      logger.error(
+        `Error getting build for ${rootProject.getProjectUri().fsPath}: ${
+          err.details || err.message
+        }`
+      );
+      this.statusBarItem.command = COMMAND_SHOW_LOGS;
+      this.statusBarItem.text = '$(warning) Gradle: Build Error';
+      this.statusBarItem.show();
+    } finally {
+      process.nextTick(() =>
+        vscode.commands.executeCommand(COMMAND_REFRESH_DAEMON_STATUS)
+      );
     }
   }
 

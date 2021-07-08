@@ -7,6 +7,7 @@ option java_outer_classname = "GradleProto";
 package gradle;
 
 service Gradle {
+  rpc GetDependencies(GetDependenciesRequest) returns (stream GetDependenciesReply) {}
   rpc GetBuild(GetBuildRequest) returns (stream GetBuildReply) {}
   rpc RunBuild(RunBuildRequest) returns (stream RunBuildReply) {}
   rpc CancelBuild(CancelBuildRequest) returns (CancelBuildReply) {}
@@ -14,6 +15,22 @@ service Gradle {
   rpc GetDaemonsStatus(GetDaemonsStatusRequest) returns (GetDaemonsStatusReply) {}
   rpc StopDaemons(StopDaemonsRequest) returns (StopDaemonsReply) {}
   rpc StopDaemon(StopDaemonRequest) returns (StopDaemonReply) {}
+}
+
+message GetDependenciesRequest {
+  string project_dir = 1;
+  string cancellation_key = 2;
+  GradleConfig gradle_config = 3;
+}
+
+message GetDependenciesReply {
+  repeated DependencyNode node = 1;
+}
+
+message DependencyNode {
+  string name = 1;
+  int32 level = 2;
+  repeated DependencyNode children = 3;
 }
 
 message GetBuildRequest {
