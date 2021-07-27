@@ -11,9 +11,13 @@ import {
 
 import { GradleTaskDefinition, GradleTaskProvider } from '../../tasks';
 import { isWorkspaceFolder } from '../../util';
-import { isGradleTask } from '../../tasks/taskUtil';
+import { getGradleDependencies, isGradleTask } from '../../tasks/taskUtil';
 import { RootProjectsStore } from '../../stores';
 import { Icons } from '../../icons';
+import { GradleClient } from '../../client';
+import { DependencyNode } from '../../proto/gradle_pb';
+import { DependencyItem } from './DependencyItem';
+import { convertDependencyNodeToSubFolderItem, SubFolderItem } from './SubFolderItem';
 
 const gradleTaskTreeItemMap: Map<string, GradleTaskTreeItem> = new Map();
 const gradleProjectTreeItemMap: Map<string, RootProjectTreeItem> = new Map();
@@ -38,6 +42,7 @@ function resetCachedTreeItems(): void {
 export class GradleTasksTreeDataProvider
   implements vscode.TreeDataProvider<vscode.TreeItem> {
   private collapsed = true;
+  private projectDependencyNodes: DependencyNode[] | undefined;
 
   private readonly _onDidChangeTreeData: vscode.EventEmitter<vscode.TreeItem | null> = new vscode.EventEmitter<vscode.TreeItem | null>();
   public readonly onDidChangeTreeData: vscode.Event<vscode.TreeItem | null> = this
@@ -47,7 +52,8 @@ export class GradleTasksTreeDataProvider
     private readonly context: vscode.ExtensionContext,
     private readonly rootProjectStore: RootProjectsStore,
     private readonly gradleTaskProvider: GradleTaskProvider,
-    private readonly icons: Icons
+    private readonly icons: Icons,
+    private readonly client: GradleClient,
   ) {
     const collapsed = this.context.workspaceState.get(
       'gradleTasksCollapsed',
@@ -91,7 +97,9 @@ export class GradleTasksTreeDataProvider
       element instanceof RootProjectTreeItem ||
       element instanceof ProjectTreeItem ||
       element instanceof TreeItemWithTasksOrGroups ||
-      element instanceof GradleTaskTreeItem
+      element instanceof GradleTaskTreeItem ||
+      element instanceof DependencyItem ||
+      element instanceof SubFolderItem
     ) {
       return element.parentTreeItem || null;
     }
@@ -105,7 +113,31 @@ export class GradleTasksTreeDataProvider
       return element.projects;
     }
     if (element instanceof ProjectTreeItem) {
-      return [...element.groups, ...element.tasks];
+      const children = [];
+      const taskItem = new SubFolderItem("Tasks", vscode.TreeItemCollapsibleState.Collapsed, element);
+      taskItem.setChildren([...element.groups, ...element.tasks]);
+      children.push(taskItem);
+      if (!this.projectDependencyNodes) {
+        const projectRoots = await this.rootProjectStore.getProjectRoots();
+        const reply = await getGradleDependencies(this.client, projectRoots[0]);
+        if (!reply) {
+          return children;
+        }
+        this.projectDependencyNodes = reply.getNodeList();
+        if (!this.projectDependencyNodes) {
+          return children;
+        }
+      }
+      for (const node of this.projectDependencyNodes) {
+        if (node.getName() === element.label) {
+          const item = convertDependencyNodeToSubFolderItem(node, element);
+          if (item) {
+            children.push(item);
+          }
+        }
+      }
+
+      return children;
     }
     if (element instanceof GroupTreeItem) {
       return element.tasks;
@@ -115,6 +147,9 @@ export class GradleTasksTreeDataProvider
       element instanceof NoGradleTasksTreeItem
     ) {
       return [];
+    }
+    if (element instanceof DependencyItem || element instanceof SubFolderItem) {
+      return element.getChildren() || [];
     }
     if (!element) {
       return await this.buildTreeItems();

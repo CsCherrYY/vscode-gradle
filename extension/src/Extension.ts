@@ -26,7 +26,6 @@ import {
   PINNED_TASKS_VIEW,
   GRADLE_DAEMONS_VIEW,
   RECENT_TASKS_VIEW,
-  GRADLE_DEPENDENCIES_VIEW,
 } from './views/constants';
 import { focusTaskInGradleTasksTree } from './views/viewUtil';
 import { COMMAND_RENDER_TASK, COMMAND_REFRESH } from './commands';
@@ -37,8 +36,7 @@ import {
   getConfigReuseTerminals,
 } from './util/config';
 import { FileWatcher } from './util/FileWatcher';
-import { GradleDependenciesTreeDataProvider } from './views/gradleDependencies/GradleDependenciesTreeDataProvider';
-import { DependencyNode } from './proto/gradle_pb';
+import { DependencyItem } from './views/gradleTasks/DependencyItem';
 
 export class Extension {
   private readonly client: GradleClient;
@@ -61,8 +59,6 @@ export class Extension {
   private readonly recentTasksTreeDataProvider: RecentTasksTreeDataProvider;
   private readonly recentTasksTreeView: vscode.TreeView<vscode.TreeItem>;
   private readonly gradleTasksTreeDataProvider: GradleTasksTreeDataProvider;
-  private readonly gradleDependenciesTreeView: vscode.TreeView<DependencyNode>;
-  private readonly gradleDependenciesTreeDataProvider: GradleDependenciesTreeDataProvider;
   private readonly api: Api;
   private readonly commands: Commands;
   private readonly _onDidTerminalOpen: vscode.EventEmitter<vscode.Terminal> = new vscode.EventEmitter<vscode.Terminal>();
@@ -109,7 +105,8 @@ export class Extension {
       this.context,
       this.rootProjectsStore,
       this.gradleTaskProvider,
-      this.icons
+      this.icons,
+      this.client,
     );
     this.gradleTasksTreeView = vscode.window.createTreeView(GRADLE_TASKS_VIEW, {
       treeDataProvider: this.gradleTasksTreeDataProvider,
@@ -153,18 +150,6 @@ export class Extension {
       treeDataProvider: this.recentTasksTreeDataProvider,
       showCollapseAll: false,
     });
-    this.gradleDependenciesTreeDataProvider = new GradleDependenciesTreeDataProvider(
-      this.rootProjectsStore,
-      this.client,
-      this.icons,
-    );
-    this.gradleDependenciesTreeView = vscode.window.createTreeView<DependencyNode>(
-      GRADLE_DEPENDENCIES_VIEW,
-      {
-        treeDataProvider: this.gradleDependenciesTreeDataProvider,
-        showCollapseAll: false,
-      }
-    );
 
     this.gradleTaskManager = new GradleTaskManager(context);
     this.buildFileWatcher = new FileWatcher('**/*.{gradle,gradle.kts}');
@@ -201,6 +186,10 @@ export class Extension {
 
     this.client.onDidConnect(() => this.refresh());
 
+    vscode.commands.registerCommand("gradle.TaskTreeView.reveal", (item: DependencyItem) => {
+      this.gradleTasksTreeView.reveal(item);
+    });
+
     void this.activate();
   }
 
@@ -220,7 +209,6 @@ export class Extension {
       this.gradleTasksTreeView,
       this.pinnedTasksTreeView,
       this.recentTasksTreeView,
-      this.gradleDependenciesTreeView
     );
   }
 

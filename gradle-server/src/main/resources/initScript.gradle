@@ -1,0 +1,9 @@
+initscript {
+    dependencies {
+        classpath files('#PLUGIN_JAR#')
+    }
+}
+
+allprojects {
+    apply plugin: com.microsoft.gradle.GradlePlugin
+}

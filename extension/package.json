@@ -59,12 +59,7 @@
       "gradleContainerView": [
         {
           "id": "gradleTasksView",
-          "name": "Gradle Tasks",
-          "when": "gradle:activated"
-        },
-        {
-          "id": "gradleDependenciesView",
-          "name": "Gradle Dependencies",
+          "name": "Gradle Projects",
           "when": "gradle:activated"
         },
         {

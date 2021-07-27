@@ -1,9 +1,5 @@
 package com.github.badsyntax.gradle.handlers;
 
-import com.avast.server.libver.model.gradle.GradleDepsDescriptor;
-import com.avast.server.libver.model.gradle.Node;
-import com.avast.server.libver.model.gradle.Subproject;
-import com.avast.server.libver.service.impl.GradleParser;
 import com.github.badsyntax.gradle.ByteBufferOutputStream;
 import com.github.badsyntax.gradle.DependencyNode;
 import com.github.badsyntax.gradle.ErrorMessageBuilder;
@@ -14,15 +10,23 @@ import com.github.badsyntax.gradle.GradleProjectConnector;
 import com.github.badsyntax.gradle.exceptions.GradleConnectionException;
 import com.google.common.base.Strings;
 import com.google.protobuf.ByteString;
+import com.microsoft.gradle.api.GradleDependencyNode;
+import com.microsoft.gradle.api.GradleModelAction;
+import com.microsoft.gradle.api.GradleToolingModel;
 import io.grpc.stub.StreamObserver;
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
+import org.apache.commons.io.IOUtils;
+import org.gradle.tooling.BuildActionExecuter;
 import org.gradle.tooling.BuildCancelledException;
-import org.gradle.tooling.BuildLauncher;
 import org.gradle.tooling.CancellationToken;
 import org.gradle.tooling.GradleConnector;
 import org.gradle.tooling.ModelBuilder;
@@ -30,7 +34,6 @@ import org.gradle.tooling.ProjectConnection;
 import org.gradle.tooling.events.OperationType;
 import org.gradle.tooling.events.ProgressEvent;
 import org.gradle.tooling.events.ProgressListener;
-import org.gradle.tooling.model.DomainObjectSet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -87,29 +90,19 @@ public class GetDependenciesHandler {
     }
 
     try (ProjectConnection connection = gradleConnector.connect()) {
-      org.gradle.tooling.model.GradleProject rootProject = getGradleProject(connection);
-      String rootname = rootProject.getName();
-      List<DependencyNode> resultList = new ArrayList<>();
-      BuildLauncher build = connection.newBuild();
-      build.addProgressListener(progressListener);
-      build.setStandardOutput(standardOutputListener);
-      build.forTasks("dependencies");
-      build.run();
-      GradleDepsDescriptor gradleDepsDescriptor = new GradleParser(this.result).parse();
-      DependencyNode resultNode = getDependencyNode(gradleDepsDescriptor, rootname);
-      resultList.add(resultNode);
-      DomainObjectSet<? extends org.gradle.tooling.model.GradleProject> children =
-          rootProject.getChildren();
-      for (org.gradle.tooling.model.GradleProject child : children) {
-        String name = child.getName();
-        this.result = "";
-        build.forTasks(name + ":dependencies");
-        build.run();
-        gradleDepsDescriptor = new GradleParser(this.result).parse();
-        resultNode = getDependencyNode(gradleDepsDescriptor, name);
-        resultList.add(resultNode);
-      }
-      responseObserver.onNext(GetDependenciesReply.newBuilder().addAllNode(resultList).build());
+      BuildActionExecuter<GradleToolingModel> action = connection.action(new GradleModelAction());
+      File initScript = File.createTempFile("init-build", ".gradle");
+      initScript.deleteOnExit();
+      File pluginFile = File.createTempFile("custom-plugin", ".jar");
+      pluginFile.deleteOnExit();
+      CreateTempFileFromResource("/plugin.jar", pluginFile);
+      initScriptFromResource(pluginFile, initScript);
+      action.withArguments("--init-script", initScript.getAbsolutePath());
+      action.setJavaHome(new File("C:/Program Files/AdoptOpenJDK/jdk-11.0.11.9-hotspot"));
+      GradleToolingModel gradleModel = action.run();
+      GradleDependencyNode root = gradleModel.getDependencyNode();
+      responseObserver.onNext(
+          GetDependenciesReply.newBuilder().addAllNode(getProjectDependencyNodes(root)).build());
       responseObserver.onCompleted();
     } catch (BuildCancelledException e) {
       // TODO
@@ -120,66 +113,121 @@ public class GetDependenciesHandler {
     }
   }
 
-  private DependencyNode getDependencyNode(
-      GradleDepsDescriptor gradleDepsDescriptor, String projectName) {
-    Map<String, Subproject> projectMap = gradleDepsDescriptor.getProjects();
-    for (Map.Entry<String, Subproject> entry : projectMap.entrySet()) {
-      Subproject project = entry.getValue();
-      List<DependencyNode> subNodes = getDependencyNode(project);
-      return DependencyNode.newBuilder()
-          .setName(projectName)
-          .setLevel(0)
-          .addAllChildren(subNodes)
-          .build();
-    }
-    return null;
+  private void CreateTempFileFromResource(String classpath, File outputFile) throws IOException {
+    InputStream input = GetDependenciesHandler.class.getResourceAsStream(classpath);
+    OutputStream output = new BufferedOutputStream(new FileOutputStream(outputFile));
+    IOUtils.copy(input, output);
+    input.close();
+    output.close();
   }
 
-  private List<DependencyNode> getDependencyNode(Subproject project) {
-    List<DependencyNode> result = new ArrayList<>();
-    Map<String, List<Node>> sourceSets = project.getSourceSet();
-    for (Map.Entry<String, List<Node>> sourceSet : sourceSets.entrySet()) {
-      String name = sourceSet.getKey();
-      List<Node> nodes = sourceSet.getValue();
-      List<DependencyNode> children = new ArrayList<>();
-      for (Node node : nodes) {
-        DependencyNode childNode = getDependencyNode(node);
-        if (childNode == null) {
-          continue;
-        }
-        children.add(childNode);
-      }
-      if (children.size() == 0) {
-        continue;
-      }
-      DependencyNode node =
-          DependencyNode.newBuilder().setName(name).setLevel(1).addAllChildren(children).build();
-      result.add(node);
+  private void initScriptFromResource(File extractedJarFile, File outputFile) throws IOException {
+    InputStream input = GetDependenciesHandler.class.getResourceAsStream("/initScript.gradle");
+
+    // replace token with extracted file, replace '\' with '/' to handle Windows
+    // paths
+    String processed =
+        IOUtils.toString(input)
+            .replace("#PLUGIN_JAR#", extractedJarFile.getAbsolutePath())
+            .replace("\\", "/");
+    input.close();
+
+    InputStream processedInput = IOUtils.toInputStream(processed);
+
+    OutputStream output = new BufferedOutputStream(new FileOutputStream(outputFile));
+    IOUtils.copy(processedInput, output);
+
+    output.close();
+    processedInput.close();
+  }
+
+  private List<DependencyNode> getProjectDependencyNodes(GradleDependencyNode root) {
+    String name = root.getName();
+    if (name == null) {
+      name = "";
     }
+    String group = root.getGroup();
+    if (group == null) {
+      group = "";
+    }
+    String id = root.getId();
+    if (id == null) {
+      id = "";
+    }
+    String version = root.getVersion();
+    if (version == null) {
+      version = "";
+    }
+    String type = root.getType();
+    if (type == null) {
+      type = "";
+    }
+    List<DependencyNode> result = new ArrayList<>();
+    List<DependencyNode> children = new ArrayList<>();
+    for (GradleDependencyNode child : root.getChildren()) {
+      if (child.getType().equals("project")) {
+        result.addAll(getProjectDependencyNodes(child));
+      } else {
+        DependencyNode childNode = getDependencyNode(child);
+        if (childNode != null) {
+          children.add(childNode);
+        }
+      }
+    }
+    DependencyNode self =
+        DependencyNode.newBuilder()
+            .setName(name)
+            .setGroup(group)
+            .setId(id)
+            .setVersion(version)
+            .setType(type)
+            .addAllChildren(children)
+            .build();
+    result.add(self);
     return result;
   }
 
-  private DependencyNode getDependencyNode(Node node) {
-    String text = node.getText();
-    if (text.contains("(n)")) {
+  private DependencyNode getDependencyNode(GradleDependencyNode node) {
+    String name = node.getName();
+    if (name == null) {
+      name = "";
+    }
+    String group = node.getGroup();
+    if (group == null) {
+      group = "";
+    }
+    String id = node.getId();
+    if (id == null) {
+      id = "";
+    }
+    String version = node.getVersion();
+    if (version == null) {
+      version = "";
+    }
+    String type = node.getType();
+    if (type == null) {
+      type = "";
+    }
+    List<DependencyNode> children = new ArrayList<>();
+    if (node.getChildren() != null) {
+      for (GradleDependencyNode child : node.getChildren()) {
+        DependencyNode childNode = getDependencyNode(child);
+        if (childNode != null) {
+          children.add(childNode);
+        }
+      }
+    } else if (type.equals("configuration")) {
       return null;
     }
-    DependencyNode dependencyNode;
-    if (node.getChildren() == null || node.getChildren().isEmpty()) {
-      dependencyNode = DependencyNode.newBuilder().setName(node.getText()).setLevel(2).build();
-    } else {
-      List<DependencyNode> children = new ArrayList<>();
-      for (Node child : node.getChildren()) {
-        children.add(getDependencyNode(child));
-      }
-      dependencyNode =
-          DependencyNode.newBuilder()
-              .setName(node.getText())
-              .setLevel(2)
-              .addAllChildren(children)
-              .build();
-    }
-    return dependencyNode;
+
+    return DependencyNode.newBuilder()
+        .setName(name)
+        .setGroup(group)
+        .setId(id)
+        .setVersion(version)
+        .setType(type)
+        .addAllChildren(children)
+        .build();
   }
 
   private void replyWithProgress(ProgressEvent progressEvent) {

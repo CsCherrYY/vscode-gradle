@@ -29,8 +29,11 @@ message GetDependenciesReply {
 
 message DependencyNode {
   string name = 1;
-  int32 level = 2;
-  repeated DependencyNode children = 3;
+  string group = 2;
+  string id = 3;
+  string version = 4;
+  string type = 5;
+  repeated DependencyNode children = 6;
 }
 
 message GetBuildRequest {
